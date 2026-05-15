@@ -3,45 +3,34 @@ import torch.nn.functional as F
 from typing import Tuple
 
 
-def tuned_lens_loss(
-    logits_all: torch.Tensor,
+def tuned_lens_loss_layer(
+    logits_l: torch.Tensor,
     log_P_model: torch.Tensor,
-    W: torch.Tensor,
-    b: torch.Tensor,
+    W_l: torch.Tensor,
+    b_l: torch.Tensor,
     lambda_reg: float,
     hidden_dim: int,
 ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     """
-    Vectorized tuned lens loss across all layers.
+    Loss for a single layer. Keeps peak memory at (B, S, V) instead of (L, B, S, V).
 
     Args:
-        logits_all:  Raw logits from the lens.          Shape: (L, B, S, V)
-        log_P_model: Log-probs of the frozen model.     Shape: (B, S, V)
-        W:           Lens weight matrices.              Shape: (L, D, D)
-        b:           Lens bias vectors.                 Shape: (L, D)
+        logits_l:    Raw logits from the lens for one layer. Shape: (B, S, V)
+        log_P_model: Log-probs of the frozen model.          Shape: (B, S, V)
+        W_l:         Lens weight matrix for this layer.      Shape: (D, D)
+        b_l:         Lens bias for this layer.               Shape: (D,)
         lambda_reg:  Regularization coefficient.
         hidden_dim:  D (needed to build the identity reference).
 
     Returns:
-        total_loss:      Scalar — sum of KLD + lambda_reg * reg across all layers.
-        kld_per_layer:   Shape (L,) — mean KLD(P_l || P_model) per layer.
-        reg_per_layer:   Shape (L,) — ||W_l - I||_F^2 + ||b_l||^2 per layer.
+        total_loss: Scalar.
+        kld:        Scalar — mean KLD(P_l || P_model).
+        reg:        Scalar — ||W_l - I||_F^2 + ||b_l||^2.
     """
-    # KLD(P_l || P_model) = sum_v P_l * (log P_l - log P_model)
-    # Use F.kl_div with log_target=True — avoids materializing a full (L,B,S,V) P_all tensor
-    # F.kl_div(input, target, log_target=True) = exp(target) * (target - input) = P_l*(logP_l - logP_model)
-    log_P_all = F.log_softmax(logits_all, dim=-1)                        # (L, B, S, V)
-    kld_per_layer = F.kl_div(
-        log_P_model.unsqueeze(0),  # (1, B, S, V) — broadcast over L
-        log_P_all,                  # (L, B, S, V)
-        reduction="none",
-        log_target=True,
-    ).sum(-1).mean((1, 2))          # (L,)
+    log_P_l = F.log_softmax(logits_l, dim=-1)                               # (B, S, V)
+    kld = F.kl_div(log_P_model, log_P_l, reduction="none", log_target=True).sum(-1).mean()
 
-    # ||W_l - I||_F^2 + ||b_l||^2  for each layer
-    I = torch.eye(hidden_dim, device=W.device, dtype=W.dtype).unsqueeze(0)  # (1, D, D)
-    reg_per_layer = (W - I).pow(2).sum((1, 2)) + b.pow(2).sum(1)            # (L,)
+    I = torch.eye(hidden_dim, device=W_l.device, dtype=W_l.dtype)
+    reg = (W_l - I).pow(2).sum() + b_l.pow(2).sum()
 
-    total_loss = kld_per_layer.sum() + lambda_reg * reg_per_layer.sum()
-
-    return total_loss, kld_per_layer, reg_per_layer
+    return kld + lambda_reg * reg, kld, reg

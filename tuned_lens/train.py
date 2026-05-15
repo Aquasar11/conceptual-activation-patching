@@ -5,7 +5,7 @@ from tqdm import tqdm
 
 from config import TunedLensConfig
 from lens import TunedLens
-from loss import tuned_lens_loss
+from loss import tuned_lens_loss_layer
 from model_utils import load_model, get_model_outputs
 from data import build_dataloaders
 from evaluate import evaluate
@@ -24,15 +24,17 @@ def train(config: TunedLensConfig):
     lens = TunedLens(hidden_dim=hidden_dim, layer_indices=config.layers).to(device)
     optimizer = torch.optim.AdamW(lens.parameters(), lr=config.learning_rate)
 
+    print("Building dataloaders (tokenizing dataset)...")
     train_loader, val_loader = build_dataloaders(config)
 
     global_step = 0
     best_val_kld = float("inf")
+    L = len(config.layers)
 
     # Running accumulators — reset every log_every steps
     running_total_loss = 0.0
-    running_kld = torch.zeros(len(config.layers))
-    running_reg = torch.zeros(len(config.layers))
+    running_kld = torch.zeros(L)
+    running_reg = torch.zeros(L)
 
     for epoch in range(config.num_epochs):
         lens.train()
@@ -43,22 +45,30 @@ def train(config: TunedLensConfig):
 
             log_P_model, H = get_model_outputs(model, input_ids, config.layers, dtype)
 
-            logits_all = lens(H, unembed_weight)  # (L, B, S-1, V)
-
-            total_loss, kld_per_layer, reg_per_layer = tuned_lens_loss(
-                logits_all, log_P_model, lens.W, lens.b, config.lambda_reg, hidden_dim
-            )
-
+            # Loop over layers: keeps peak memory at (B, S, V) instead of (L, B, S, V)
             optimizer.zero_grad()
-            total_loss.backward()
+            total_loss_val = 0.0
+            kld_per_layer = torch.zeros(L)
+            reg_per_layer = torch.zeros(L)
+
+            for i in range(L):
+                logits_l = lens.forward_layer(H[i], unembed_weight, i)     # (B, S, V)
+                loss_l, kld_l, reg_l = tuned_lens_loss_layer(
+                    logits_l, log_P_model, lens.W[i], lens.b[i], config.lambda_reg, hidden_dim
+                )
+                loss_l.backward()
+                total_loss_val += loss_l.item()
+                kld_per_layer[i] = kld_l.item()
+                reg_per_layer[i] = reg_l.item()
+
             optimizer.step()
 
-            running_total_loss += total_loss.item()
-            running_kld += kld_per_layer.detach().cpu()
-            running_reg += reg_per_layer.detach().cpu()
+            running_total_loss += total_loss_val
+            running_kld += kld_per_layer
+            running_reg += reg_per_layer
             global_step += 1
 
-            pbar.set_postfix(loss=f"{total_loss.item():.4f}", step=global_step)
+            pbar.set_postfix(loss=f"{total_loss_val:.4f}", step=global_step)
 
             if global_step % config.log_every == 0:
                 avg_loss = running_total_loss / config.log_every

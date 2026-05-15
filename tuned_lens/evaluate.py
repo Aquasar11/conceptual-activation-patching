@@ -5,7 +5,6 @@ from tqdm import tqdm
 
 from config import TunedLensConfig
 from lens import TunedLens
-from loss import tuned_lens_loss
 from model_utils import get_model_outputs
 
 
@@ -51,34 +50,27 @@ def evaluate(
 
         log_P_model, H = get_model_outputs(model, input_ids, config.layers, dtype)
 
-        logits_all = lens(H, unembed_weight)  # (L, B, S-1, V)
+        # model_top1 is the same for all layers — compute once
+        model_top1 = log_P_model.argmax(dim=-1)  # (B, S-1)
 
-        # KLD — reuse shared loss function (lambda_reg=0: no reg during eval)
-        _, kld_per_layer, _ = tuned_lens_loss(
-            logits_all, log_P_model, lens.W, lens.b, 0.0, hidden_dim
-        )
+        # Loop over layers: keeps peak memory at (B, S, V) instead of (L, B, S, V)
+        for i in range(L):
+            logits_l = lens.forward_layer(H[i], unembed_weight, i)  # (B, S-1, V)
+            B, S, V = logits_l.shape
 
-        _, B, S, V = logits_all.shape
+            log_P_l = F.log_softmax(logits_l, dim=-1)
+            kld_l = F.kl_div(log_P_model, log_P_l, reduction="none", log_target=True).sum(-1).mean()
 
-        # Top-1 / Top-5 agreement with the model's own predicted token
-        model_top1 = log_P_model.argmax(dim=-1)                                           # (B, S)
-        top1 = (logits_all.argmax(-1) == model_top1.unsqueeze(0)).float().mean((1, 2))    # (L,)
-        top5 = (
-            logits_all.topk(5, dim=-1).indices == model_top1.unsqueeze(0).unsqueeze(-1)
-        ).any(-1).float().mean((1, 2))                                                     # (L,)
+            top1_l = (logits_l.argmax(-1) == model_top1).float().mean()
+            top5_l = (logits_l.topk(5, dim=-1).indices == model_top1.unsqueeze(-1)).any(-1).float().mean()
 
-        # Cross-entropy against ground-truth next token
-        targets_expanded = targets.unsqueeze(0).expand(L, B, S).reshape(L * B * S)
-        ce_per_layer = (
-            F.cross_entropy(logits_all.reshape(L * B * S, V), targets_expanded, reduction="none")
-            .view(L, B, S)
-            .mean((1, 2))
-        )  # (L,)
+            ce_l = F.cross_entropy(logits_l.reshape(B * S, V), targets.reshape(B * S))
 
-        kld_sum  += kld_per_layer.cpu()
-        ce_sum   += ce_per_layer.cpu()
-        top1_sum += top1.cpu()
-        top5_sum += top5.cpu()
+            kld_sum[i]  += kld_l.cpu()
+            ce_sum[i]   += ce_l.cpu()
+            top1_sum[i] += top1_l.cpu()
+            top5_sum[i] += top5_l.cpu()
+
         num_batches += 1
 
     return {
