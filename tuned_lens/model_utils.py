@@ -1,6 +1,6 @@
 import torch
 import torch.nn.functional as F
-from transformers import AutoModelForCausalLM
+from transformers import Qwen2_5_VLForConditionalGeneration
 from typing import List, Tuple
 
 from config import TunedLensConfig
@@ -8,8 +8,7 @@ from config import TunedLensConfig
 
 def load_model(config: TunedLensConfig):
     """
-    Load the VLM backbone (text-only via AutoModelForCausalLM), freeze all parameters,
-    and extract the unembedding weight in float32.
+    Load the VLM backbone, freeze all parameters, and extract the unembedding weight in float32.
 
     Returns:
         model:          Frozen language model on config.device.
@@ -17,11 +16,16 @@ def load_model(config: TunedLensConfig):
         hidden_dim:     D
     """
     dtype = getattr(torch, config.dtype)
-    model = AutoModelForCausalLM.from_pretrained(
+    model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
         config.model_name,
-        torch_dtype=dtype,
+        dtype=dtype,
         device_map=config.device,
     )
+
+    # Drop the vision tower — text-only training never uses it
+    del model.model.visual
+    torch.cuda.empty_cache()
+
     for param in model.parameters():
         param.requires_grad = False
     model.eval()
