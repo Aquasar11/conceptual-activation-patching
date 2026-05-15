@@ -1,0 +1,27 @@
+# Model
+model_name: "Qwen/Qwen2.5-VL-7B-Instruct"
+
+# Dataset
+dataset_name: "Salesforce/wikitext"
+dataset_config: "wikitext-103-raw-v1"
+
+# Layers to train (1-indexed: hidden_states[l] is the output of transformer layer l)
+# Valid range for Qwen2.5-VL-7B: 1 (first) to 28 (last)
+layers: [16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26]
+
+# Training
+seq_len: 512
+batch_size: 4
+num_epochs: 10
+learning_rate: 0.001
+lambda_reg: 0.0001
+
+# Checkpointing and logging
+output_dir: "./outputs/lens_checkpoints"
+tensorboard_dir: "./runs"
+log_every: 100
+eval_every_epoch: true
+
+# Hardware
+dtype: "bfloat16"   # bfloat16 recommended for A100
+device: "cuda"
