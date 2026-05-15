@@ -19,7 +19,7 @@ lambda_reg: 0.0001
 # Checkpointing and logging
 output_dir: "./outputs/lens_checkpoints"
 tensorboard_dir: "./runs"
-log_every: 100
+log_every: 1000
 eval_every_epoch: true
 
 # Hardware
