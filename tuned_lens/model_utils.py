@@ -58,13 +58,14 @@ def get_model_outputs(
         outputs = model(input_ids=input_ids, output_hidden_states=True)
 
     # Shift: position t predicts token t+1
+    # .detach() is redundant under @no_grad but makes the intent explicit
     log_P_model = F.log_softmax(
-        outputs.logits[:, :-1, :].float(), dim=-1
+        outputs.logits[:, :-1, :].detach().float(), dim=-1
     ).contiguous()  # (B, S-1, V)
 
     # Extract and stack only the layers we need — avoid casting all 29
     H = torch.stack(
-        [outputs.hidden_states[l][:, :-1, :].float() for l in layer_indices],
+        [outputs.hidden_states[l][:, :-1, :].detach().float() for l in layer_indices],
         dim=0,
     )  # (L, B, S-1, D)
 

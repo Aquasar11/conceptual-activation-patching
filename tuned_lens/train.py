@@ -41,7 +41,7 @@ def train(config: TunedLensConfig):
 
             log_P_model, H = get_model_outputs(model, input_ids, config.layers, dtype)
 
-            logits_all = lens(H, unembed_weight)   # (L, B, S-1, V)
+            logits_all = lens(H, unembed_weight)  # (L, B, S-1, V)
 
             total_loss, kld_per_layer, reg_per_layer = tuned_lens_loss(
                 logits_all, log_P_model, lens.W, lens.b, config.lambda_reg, hidden_dim
@@ -71,19 +71,27 @@ def train(config: TunedLensConfig):
 
         if config.eval_every_epoch:
             print(f"\nEvaluating after epoch {epoch+1}...")
-            results = evaluate(model, lens, val_loader, config)
+            results = evaluate(model, lens, val_loader, config, unembed_weight, hidden_dim)
 
             mean_val_kld = results["kld"].mean().item()
 
-            print("Per-layer validation results (KLD lower = closer to model predictions):")
+            print("Per-layer validation results:")
             for i, l in enumerate(config.layers):
-                print(f"  Layer {l:2d}: KLD={results['kld'][i].item():.4f}  CE={results['ce'][i].item():.4f}")
+                print(
+                    f"  Layer {l:2d}: "
+                    f"KLD={results['kld'][i].item():.4f}  "
+                    f"CE={results['ce'][i].item():.4f}  "
+                    f"Top1={results['top1'][i].item():.3f}  "
+                    f"Top5={results['top5'][i].item():.3f}"
+                )
             print(f"  Mean KLD: {mean_val_kld:.4f}")
 
             writer.add_scalar("val/mean_kld", mean_val_kld, global_step)
             for i, l in enumerate(config.layers):
-                writer.add_scalar(f"val/layer_{l:02d}_kld", results["kld"][i].item(), global_step)
-                writer.add_scalar(f"val/layer_{l:02d}_ce", results["ce"][i].item(), global_step)
+                writer.add_scalar(f"val/layer_{l:02d}_kld",  results["kld"][i].item(),  global_step)
+                writer.add_scalar(f"val/layer_{l:02d}_ce",   results["ce"][i].item(),   global_step)
+                writer.add_scalar(f"val/layer_{l:02d}_top1", results["top1"][i].item(), global_step)
+                writer.add_scalar(f"val/layer_{l:02d}_top5", results["top5"][i].item(), global_step)
 
             if mean_val_kld < best_val_kld:
                 best_val_kld = mean_val_kld

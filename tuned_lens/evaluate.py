@@ -14,25 +14,34 @@ def evaluate(
     lens: TunedLens,
     val_loader: DataLoader,
     config: TunedLensConfig,
+    unembed_weight: torch.Tensor,
+    hidden_dim: int,
 ) -> dict:
     """
     Evaluate the tuned lens on the validation set.
 
-    Returns a dict with:
-        "kld": Tensor (L,) — mean KLD(P_l || P_model) per layer
-        "ce":  Tensor (L,) — mean cross-entropy (next-token prediction) per layer
+    Args:
+        unembed_weight: model.lm_head.weight as float32 (V, D) — pass the one already
+                        held by the caller to avoid a duplicate GPU allocation.
+        hidden_dim:     D, passed for the same reason.
+
+    Returns a dict with Tensors of shape (L,), one value per trained layer:
+        "kld":  mean KLD(P_l || P_model)
+        "ce":   mean cross-entropy against ground-truth next token
+        "top1": fraction of positions where lens top-1 == model top-1
+        "top5": fraction of positions where model top-1 is in lens top-5
     """
     model.eval()
     lens.eval()
 
     dtype = getattr(torch, config.dtype)
     device = config.device
-    unembed_weight = model.lm_head.weight.detach().float()
-    hidden_dim = unembed_weight.shape[1]
     L = len(config.layers)
 
-    kld_sum = torch.zeros(L)
-    ce_sum = torch.zeros(L)
+    kld_sum  = torch.zeros(L)
+    ce_sum   = torch.zeros(L)
+    top1_sum = torch.zeros(L)
+    top5_sum = torch.zeros(L)
     num_batches = 0
 
     for input_ids in val_loader:
@@ -41,15 +50,23 @@ def evaluate(
 
         log_P_model, H = get_model_outputs(model, input_ids, config.layers, dtype)
 
-        logits_all = lens(H, unembed_weight)   # (L, B, S-1, V)
+        logits_all = lens(H, unembed_weight)  # (L, B, S-1, V)
 
-        # KLD via shared loss function (lambda_reg=0 — no regularization during eval)
+        # KLD — reuse shared loss function (lambda_reg=0: no reg during eval)
         _, kld_per_layer, _ = tuned_lens_loss(
             logits_all, log_P_model, lens.W, lens.b, 0.0, hidden_dim
         )
 
-        # Cross-entropy: how well does each layer predict the actual next token?
-        LB, B, S, V = logits_all.shape
+        _, B, S, V = logits_all.shape
+
+        # Top-1 / Top-5 agreement with the model's own predicted token
+        model_top1 = log_P_model.argmax(dim=-1)                                           # (B, S)
+        top1 = (logits_all.argmax(-1) == model_top1.unsqueeze(0)).float().mean((1, 2))    # (L,)
+        top5 = (
+            logits_all.topk(5, dim=-1).indices == model_top1.unsqueeze(0).unsqueeze(-1)
+        ).any(-1).float().mean((1, 2))                                                     # (L,)
+
+        # Cross-entropy against ground-truth next token
         targets_expanded = targets.unsqueeze(0).expand(L, B, S).reshape(L * B * S)
         ce_per_layer = (
             F.cross_entropy(logits_all.reshape(L * B * S, V), targets_expanded, reduction="none")
@@ -57,11 +74,15 @@ def evaluate(
             .mean((1, 2))
         )  # (L,)
 
-        kld_sum += kld_per_layer.cpu()
-        ce_sum += ce_per_layer.cpu()
+        kld_sum  += kld_per_layer.cpu()
+        ce_sum   += ce_per_layer.cpu()
+        top1_sum += top1.cpu()
+        top5_sum += top5.cpu()
         num_batches += 1
 
     return {
-        "kld": kld_sum / num_batches,
-        "ce": ce_sum / num_batches,
+        "kld":  kld_sum  / num_batches,
+        "ce":   ce_sum   / num_batches,
+        "top1": top1_sum / num_batches,
+        "top5": top5_sum / num_batches,
     }

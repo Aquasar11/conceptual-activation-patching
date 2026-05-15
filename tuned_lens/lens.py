@@ -77,7 +77,8 @@ class TunedLens(nn.Module):
         lens = cls(hidden_dim, layer_indices)
         with torch.no_grad():
             for i, layer_idx in enumerate(layer_indices):
-                ckpt = torch.load(
+                # Reuse the already-loaded first checkpoint instead of re-reading the file
+                ckpt = first if i == 0 else torch.load(
                     os.path.join(output_dir, f"layer_{layer_idx:02d}.pt"), map_location=device
                 )
                 lens.W.data[i].copy_(ckpt["W"])

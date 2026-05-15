@@ -28,8 +28,15 @@ def tuned_lens_loss(
         reg_per_layer:   Shape (L,) — ||W_l - I||_F^2 + ||b_l||^2 per layer.
     """
     # KLD(P_l || P_model) = sum_v P_l * (log P_l - log P_model)
+    # Use F.kl_div with log_target=True — avoids materializing a full (L,B,S,V) P_all tensor
+    # F.kl_div(input, target, log_target=True) = exp(target) * (target - input) = P_l*(logP_l - logP_model)
     log_P_all = F.log_softmax(logits_all, dim=-1)                        # (L, B, S, V)
-    kld_per_layer = (log_P_all.exp() * (log_P_all - log_P_model)).sum(-1).mean((1, 2))  # (L,)
+    kld_per_layer = F.kl_div(
+        log_P_model.unsqueeze(0),  # (1, B, S, V) — broadcast over L
+        log_P_all,                  # (L, B, S, V)
+        reduction="none",
+        log_target=True,
+    ).sum(-1).mean((1, 2))          # (L,)
 
     # ||W_l - I||_F^2 + ||b_l||^2  for each layer
     I = torch.eye(hidden_dim, device=W.device, dtype=W.dtype).unsqueeze(0)  # (1, D, D)
