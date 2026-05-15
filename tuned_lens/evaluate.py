@@ -55,16 +55,18 @@ def evaluate(
 
         # Loop over layers: keeps peak memory at (B, S, V) instead of (L, B, S, V)
         for i in range(L):
-            logits_l = lens.forward_layer(H[i], unembed_weight, i)  # (B, S-1, V)
+            with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                logits_l = lens.forward_layer(H[i], unembed_weight, i)  # (B, S-1, V), bfloat16
             B, S, V = logits_l.shape
+            logits_l_f = logits_l.float()  # cast once for numerically sensitive ops
 
-            log_P_l = F.log_softmax(logits_l, dim=-1)
+            log_P_l = F.log_softmax(logits_l_f, dim=-1)
             kld_l = F.kl_div(log_P_model, log_P_l, reduction="none", log_target=True).sum(-1).mean()
 
-            top1_l = (logits_l.argmax(-1) == model_top1).float().mean()
+            top1_l = (logits_l.argmax(-1) == model_top1).float().mean()   # argmax fine on bfloat16
             top5_l = (logits_l.topk(5, dim=-1).indices == model_top1.unsqueeze(-1)).any(-1).float().mean()
 
-            ce_l = F.cross_entropy(logits_l.reshape(B * S, V), targets.reshape(B * S))
+            ce_l = F.cross_entropy(logits_l_f.reshape(B * S, V), targets.reshape(B * S))
 
             kld_sum[i]  += kld_l.cpu()
             ce_sum[i]   += ce_l.cpu()

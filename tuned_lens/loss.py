@@ -27,6 +27,7 @@ def tuned_lens_loss_layer(
         kld:        Scalar — mean KLD(P_l || P_model).
         reg:        Scalar — ||W_l - I||_F^2 + ||b_l||^2.
     """
+    logits_l = logits_l.float()                                              # ensure float32 for stable softmax
     log_P_l = F.log_softmax(logits_l, dim=-1)                               # (B, S, V)
     kld = F.kl_div(log_P_model, log_P_l, reduction="none", log_target=True).sum(-1).mean()
 

@@ -30,8 +30,8 @@ def load_model(config: TunedLensConfig):
         param.requires_grad = False
     model.eval()
 
-    # Cast to float32 once — lens parameters and hidden states are float32
-    unembed_weight = model.lm_head.weight.detach().float()
+    # Keep in model's native bfloat16 — lens forward runs under autocast
+    unembed_weight = model.lm_head.weight.detach()
     hidden_dim = unembed_weight.shape[1]
 
     return model, unembed_weight, hidden_dim
@@ -67,9 +67,9 @@ def get_model_outputs(
         outputs.logits[:, :-1, :].detach().float(), dim=-1
     ).contiguous()  # (B, S-1, V)
 
-    # Extract and stack only the layers we need — avoid casting all 29
+    # Keep bfloat16 — lens forward runs under autocast, no float32 cast needed here
     H = torch.stack(
-        [outputs.hidden_states[l][:, :-1, :].detach().float() for l in layer_indices],
+        [outputs.hidden_states[l][:, :-1, :].detach() for l in layer_indices],
         dim=0,
     )  # (L, B, S-1, D)
 
