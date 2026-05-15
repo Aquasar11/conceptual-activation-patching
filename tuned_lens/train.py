@@ -1,6 +1,7 @@
 import os
 import torch
 from torch.utils.tensorboard import SummaryWriter
+from tqdm import tqdm
 
 from config import TunedLensConfig
 from lens import TunedLens
@@ -36,7 +37,8 @@ def train(config: TunedLensConfig):
     for epoch in range(config.num_epochs):
         lens.train()
 
-        for input_ids in train_loader:
+        pbar = tqdm(train_loader, desc=f"Epoch {epoch+1}/{config.num_epochs}", dynamic_ncols=True)
+        for input_ids in pbar:
             input_ids = input_ids.to(device, non_blocking=True)
 
             log_P_model, H = get_model_outputs(model, input_ids, config.layers, dtype)
@@ -55,6 +57,8 @@ def train(config: TunedLensConfig):
             running_kld += kld_per_layer.detach().cpu()
             running_reg += reg_per_layer.detach().cpu()
             global_step += 1
+
+            pbar.set_postfix(loss=f"{total_loss.item():.4f}", step=global_step)
 
             if global_step % config.log_every == 0:
                 avg_loss = running_total_loss / config.log_every

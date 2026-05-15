@@ -1,6 +1,7 @@
 import torch
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
+from tqdm import tqdm
 
 from config import TunedLensConfig
 from lens import TunedLens
@@ -44,7 +45,7 @@ def evaluate(
     top5_sum = torch.zeros(L)
     num_batches = 0
 
-    for input_ids in val_loader:
+    for input_ids in tqdm(val_loader, desc="Validating", dynamic_ncols=True):
         input_ids = input_ids.to(device, non_blocking=True)
         targets = input_ids[:, 1:].contiguous()  # (B, S-1)
 
