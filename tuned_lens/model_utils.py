@@ -34,7 +34,7 @@ def load_model(config: TunedLensConfig):
     # Keep in model's native bfloat16 — lens forward runs under autocast
     unembed_weight = model.lm_head.weight.detach()
     hidden_dim = unembed_weight.shape[1]
-    final_norm = model.model.norm  # frozen RMSNorm; must be applied before lm_head
+    final_norm = model.model.language_model.norm  # frozen RMSNorm; must be applied before lm_head
 
     return model, unembed_weight, hidden_dim, final_norm
 
