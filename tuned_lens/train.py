@@ -37,9 +37,10 @@ def train(config: TunedLensConfig):
     L = len(config.layers)
 
     # GPU accumulators — avoids CPU-GPU sync on every step
-    loss_accum = torch.zeros(1, device=device)
-    kld_accum  = torch.zeros(L, device=device)
-    reg_accum  = torch.zeros(L, device=device)
+    loss_accum  = torch.zeros(1, device=device)
+    kld_accum   = torch.zeros(L, device=device)
+    reg_accum   = torch.zeros(L, device=device)
+    gnorm_accum = torch.zeros(L, device=device)  # mean |∇W_l|_F per layer
 
     for epoch in range(config.num_epochs):
         lens.train()
@@ -52,9 +53,10 @@ def train(config: TunedLensConfig):
 
             # Per-step GPU tensors — allocated once per step, no sync inside the loop
             optimizer.zero_grad()
-            loss_step = torch.zeros(1, device=device)
-            kld_step  = torch.zeros(L, device=device)
-            reg_step  = torch.zeros(L, device=device)
+            loss_step  = torch.zeros(1, device=device)
+            kld_step   = torch.zeros(L, device=device)
+            reg_step   = torch.zeros(L, device=device)
+            gnorm_step = torch.zeros(L, device=device)
 
             for i in range(L):
                 # Autocast: H[i] is bfloat16, W/b are float32 — autocast handles the
@@ -65,6 +67,10 @@ def train(config: TunedLensConfig):
                     logits_l, log_P_model, lens.W[i], lens.b[i], config.lambda_reg, hidden_dim
                 )
                 loss_l.backward()
+                # Read W.grad[i] right after its backward — each layer's grad lives at its
+                # own slice so reads are safe mid-loop without zeroing in between.
+                if lens.W.grad is not None:
+                    gnorm_step[i] = lens.W.grad[i].detach().norm()
                 loss_step   += loss_l.detach()   # GPU accumulation — no sync
                 kld_step[i]  = kld_l.detach()   # GPU assignment  — no sync
                 reg_step[i]  = reg_l.detach()   # GPU assignment  — no sync
@@ -73,28 +79,37 @@ def train(config: TunedLensConfig):
 
             # ONE GPU→CPU sync per step (scalar needed for progress bar)
             total_loss_val = loss_step.item()
-            loss_accum += loss_step
-            kld_accum  += kld_step   # GPU accumulation — no sync
-            reg_accum  += reg_step   # GPU accumulation — no sync
+            loss_accum  += loss_step
+            kld_accum   += kld_step    # GPU accumulation — no sync
+            reg_accum   += reg_step    # GPU accumulation — no sync
+            gnorm_accum += gnorm_step  # GPU accumulation — no sync
             global_step += 1
 
             pbar.set_postfix(loss=f"{total_loss_val:.4f}", step=global_step)
 
             if global_step % config.log_every == 0:
-                # 3 syncs every log_every steps for logging (vs 33 syncs every step before)
-                avg_loss = loss_accum.item() / config.log_every
-                kld_log  = kld_accum.cpu()   / config.log_every
-                reg_log  = reg_accum.cpu()   / config.log_every
+                # 4 syncs every log_every steps for logging
+                avg_loss   = loss_accum.item()  / config.log_every
+                kld_log    = kld_accum.cpu()    / config.log_every
+                reg_log    = reg_accum.cpu()    / config.log_every
+                gnorm_log  = gnorm_accum.cpu()  / config.log_every
                 print(f"Epoch {epoch+1} | Step {global_step} | loss {avg_loss:.4f}")
 
                 writer.add_scalar("train/total_loss", avg_loss, global_step)
                 for i, l in enumerate(config.layers):
-                    writer.add_scalar(f"train/layer_{l:02d}_kld", kld_log[i].item(), global_step)
-                    writer.add_scalar(f"train/layer_{l:02d}_reg", reg_log[i].item(), global_step)
+                    writer.add_scalar(f"train/layer_{l:02d}_kld",          kld_log[i].item(),                        global_step)
+                    writer.add_scalar(f"train/layer_{l:02d}_reg_weighted", reg_log[i].item() * config.lambda_reg, global_step)
+                    writer.add_scalar(f"train/layer_{l:02d}_gnorm",        gnorm_log[i].item(),                   global_step)
+
+                gnorm_str = "  ".join(
+                    f"L{l}:{gnorm_log[i].item():.4f}" for i, l in enumerate(config.layers)
+                )
+                print(f"  grad_norms(W): {gnorm_str}")
 
                 loss_accum.zero_()
                 kld_accum.zero_()
                 reg_accum.zero_()
+                gnorm_accum.zero_()
 
         if config.eval_every_epoch:
             print(f"\nEvaluating after epoch {epoch+1}...")

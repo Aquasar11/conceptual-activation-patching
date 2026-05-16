@@ -15,14 +15,14 @@ class TunedLensConfig:
     # These are 1-indexed and correspond to outputs.hidden_states indices:
     #   hidden_states[0]  = embedding output
     #   hidden_states[l]  = output of transformer layer l  (l = 1 ... num_layers)
-    layers: List[int] = field(default_factory=lambda: [16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26])
+    layers: List[int] = field(default_factory=lambda: [16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27])
 
     # Training
     seq_len: int = 512
     batch_size: int = 4
     num_epochs: int = 10
     learning_rate: float = 1e-3
-    lambda_reg: float = 1e-4       # weight on ||W-I||_F^2 + ||b||^2 regularization
+    lambda_reg: float = 1e-5       # weight on ||W-I||_F^2 + ||b||^2 regularization
 
     # Checkpointing and logging
     output_dir: str = "./outputs/lens_checkpoints"
