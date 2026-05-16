@@ -19,9 +19,9 @@ def train(config: TunedLensConfig):
     writer = SummaryWriter(log_dir=config.tensorboard_dir)
 
     print(f"Loading model: {config.model_name}")
-    model, unembed_weight, hidden_dim = load_model(config)
+    model, unembed_weight, hidden_dim, final_norm = load_model(config)
 
-    lens = TunedLens(hidden_dim=hidden_dim, layer_indices=config.layers).to(device)
+    lens = TunedLens(hidden_dim=hidden_dim, layer_indices=config.layers, final_norm=final_norm).to(device)
     optimizer = torch.optim.AdamW(lens.parameters(), lr=config.learning_rate)
 
     # Compile the hot-path functions — fuses matmul chain, log_softmax, and kl_div

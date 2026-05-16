@@ -1,7 +1,7 @@
 import os
 import torch
 import torch.nn as nn
-from typing import List
+from typing import List, Optional
 
 
 class TunedLens(nn.Module):
@@ -14,21 +14,28 @@ class TunedLens(nn.Module):
 
     forward_layer processes one layer at a time to keep peak memory at (B, S, V)
     instead of (L, B, S, V):
-        H_flat       = H_l.reshape(B*S, D)
-        H_transformed = H_flat @ W[i]            -> (B*S, D)
-        logits        = H_transformed @ U.T      -> (B*S, V)
-        bias          = H_flat @ b[i]            -> (B*S,)  [shift-invariant, see note]
+        H_flat        = H_l.reshape(B*S, D)
+        H_transformed = H_flat @ W[i]               -> (B*S, D)
+        H_normed      = final_norm(H_transformed)   -> (B*S, D)  [same RMSNorm the model uses]
+        logits        = H_normed @ U.T              -> (B*S, V)
+        bias          = H_flat @ b[i]               -> (B*S,)  [shift-invariant, see note]
         output        = (logits + bias).view(B, S, V)
+
+    The final_norm (model.model.norm) must be applied after W and before lm_head because
+    output_hidden_states[l] are pre-norm tensors. Without it, W=I at init computes
+    h_l @ U.T on an unnormalized vector, producing enormously peaky wrong distributions
+    for layers close to the final output — exactly what the model does NOT compute.
 
     Note on b: b adds scalar h·b_l to every vocab logit for each token position,
     which is softmax shift-invariant — b does not affect predicted distributions.
     Regularization keeps it at zero. W carries all expressive power.
     """
 
-    def __init__(self, hidden_dim: int, layer_indices: List[int]):
+    def __init__(self, hidden_dim: int, layer_indices: List[int], final_norm: Optional[nn.Module] = None):
         super().__init__()
         self.hidden_dim = hidden_dim
         self.layer_indices = layer_indices
+        self.final_norm = final_norm  # frozen model.model.norm; not a trainable parameter
         L = len(layer_indices)
 
         # Single 3D parameters — no stack() needed on every forward pass
@@ -51,6 +58,8 @@ class TunedLens(nn.Module):
         B, S, D = H_l.shape
         H_flat = H_l.reshape(B * S, D)                          # (B*S, D)
         H_transformed = H_flat @ self.W[layer_i]                # (B*S, D)
+        if self.final_norm is not None:
+            H_transformed = self.final_norm(H_transformed)      # (B*S, D)
         logits = H_transformed @ unembed_weight.T               # (B*S, V)
         bias = H_flat @ self.b[layer_i]                         # (B*S,)
         return (logits + bias.unsqueeze(-1)).view(B, S, -1)     # (B, S, V)

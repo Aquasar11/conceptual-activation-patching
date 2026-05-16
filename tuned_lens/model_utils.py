@@ -14,6 +14,7 @@ def load_model(config: TunedLensConfig):
         model:          Frozen language model on config.device.
         unembed_weight: model.lm_head.weight as float32. Shape: (V, D)
         hidden_dim:     D
+        final_norm:     model.model.norm — the RMSNorm applied before lm_head.
     """
     dtype = getattr(torch, config.dtype)
     model = Qwen2_5_VLForConditionalGeneration.from_pretrained(
@@ -33,8 +34,9 @@ def load_model(config: TunedLensConfig):
     # Keep in model's native bfloat16 — lens forward runs under autocast
     unembed_weight = model.lm_head.weight.detach()
     hidden_dim = unembed_weight.shape[1]
+    final_norm = model.model.norm  # frozen RMSNorm; must be applied before lm_head
 
-    return model, unembed_weight, hidden_dim
+    return model, unembed_weight, hidden_dim, final_norm
 
 
 @torch.no_grad()
