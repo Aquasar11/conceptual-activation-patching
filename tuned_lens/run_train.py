@@ -54,6 +54,8 @@ def parse_args():
     parser.add_argument("--log_every", type=int)
     parser.add_argument("--dtype", type=str, choices=["bfloat16", "float16", "float32"])
     parser.add_argument("--device", type=str)
+    parser.add_argument("--postnorm_layers", type=int, nargs="+")
+    parser.add_argument("--max_grad_norm", type=float)
 
     return parser.parse_args()
 
@@ -75,9 +77,9 @@ def main():
 
     # CLI overrides (only fields explicitly set on the command line)
     cli_fields = [
-        "model_name", "dataset_name", "dataset_config", "layers",
+        "model_name", "dataset_name", "dataset_config", "layers", "postnorm_layers",
         "seq_len", "batch_size", "num_epochs", "learning_rate",
-        "lambda_reg", "output_dir", "tensorboard_dir", "log_every", "dtype", "device",
+        "lambda_reg", "max_grad_norm", "output_dir", "tensorboard_dir", "log_every", "dtype", "device",
     ]
     for field in cli_fields:
         value = getattr(args, field, None)

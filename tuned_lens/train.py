@@ -21,7 +21,12 @@ def train(config: TunedLensConfig):
     print(f"Loading model: {config.model_name}")
     model, unembed_weight, hidden_dim, final_norm = load_model(config)
 
-    lens = TunedLens(hidden_dim=hidden_dim, layer_indices=config.layers, final_norm=final_norm).to(device)
+    lens = TunedLens(
+        hidden_dim=hidden_dim,
+        layer_indices=config.layers,
+        final_norm=final_norm,
+        postnorm_indices=config.postnorm_layers,
+    ).to(device)
     optimizer = torch.optim.AdamW(lens.parameters(), lr=config.learning_rate)
 
     # Compile the hot-path functions — fuses matmul chain, log_softmax, and kl_div
@@ -75,6 +80,7 @@ def train(config: TunedLensConfig):
                 kld_step[i]  = kld_l.detach()   # GPU assignment  — no sync
                 reg_step[i]  = reg_l.detach()   # GPU assignment  — no sync
 
+            torch.nn.utils.clip_grad_norm_(lens.parameters(), config.max_grad_norm)
             optimizer.step()
 
             # ONE GPU→CPU sync per step (scalar needed for progress bar)

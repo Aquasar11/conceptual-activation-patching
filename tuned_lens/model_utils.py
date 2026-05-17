@@ -12,7 +12,7 @@ def load_model(config: TunedLensConfig):
 
     Returns:
         model:          Frozen language model on config.device.
-        unembed_weight: model.lm_head.weight as float32. Shape: (V, D)
+        unembed_weight: model.lm_head.weight in model native dtype (bfloat16). Shape: (V, D)
         hidden_dim:     D
         final_norm:     model.model.norm — the RMSNorm applied before lm_head.
     """
